@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from mcp.server import Server
+import mcp.types as types
+from mcp.server import Server, ServerRequestContext
 from mcp.types import TextContent, Tool
 
 from .client import CalDAVClient
@@ -73,23 +74,16 @@ async def server_lifespan(server: Server) -> AsyncIterator[AppContext]:  # noqa:
         pass
 
 
-# Create server instance
-app = Server("mcp-caldav", lifespan=server_lifespan)
-
-
-@app.list_tools()
-async def list_tools() -> list[Tool]:
+async def list_tools(app_ctx: AppContext) -> list[Tool]:
     """List available CalDAV tools."""
-    ctx = app.request_context.lifespan_context
-
-    if not ctx or not ctx.client:
+    if not app_ctx or not app_ctx.client:
         return []
 
     tools = [
         Tool(
             name="caldav_list_calendars",
             description="List all available calendars",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {},
             },
@@ -97,7 +91,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="caldav_create_event",
             description="Create a new event in the calendar",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "calendar_index": {
@@ -232,7 +226,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="caldav_get_event_by_uid",
             description="Get a specific event by its UID",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "uid": {
@@ -251,7 +245,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="caldav_delete_event",
             description="Delete an event by its UID",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "uid": {
@@ -270,7 +264,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="caldav_search_events",
             description="Search events by text, attendees, or location",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "calendar_index": {
@@ -305,7 +299,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="caldav_get_events",
             description="Get events from calendar for a specified period",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "calendar_index": {
@@ -334,7 +328,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="caldav_get_today_events",
             description="Get all events for today",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "calendar_index": {
@@ -348,7 +342,7 @@ async def list_tools() -> list[Tool]:
         Tool(
             name="caldav_get_week_events",
             description="Get all events for the week",
-            inputSchema={
+            input_schema={
                 "type": "object",
                 "properties": {
                     "calendar_index": {
@@ -369,12 +363,11 @@ async def list_tools() -> list[Tool]:
     return tools
 
 
-@app.call_tool()
-async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
+async def call_tool(
+    app_ctx: AppContext, name: str, arguments: Any
+) -> Sequence[TextContent]:
     """Handle tool calls for CalDAV operations."""
-    ctx = app.request_context.lifespan_context
-
-    if not ctx or not ctx.client:
+    if not app_ctx or not app_ctx.client:
         config = get_caldav_config()
         missing = []
         if not config.get("url"):
@@ -401,7 +394,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
     try:
         if name == "caldav_list_calendars":
-            calendars = ctx.client.list_calendars()
+            calendars = app_ctx.client.list_calendars()
             return [
                 TextContent(
                     type="text",
@@ -447,7 +440,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                     with suppress(ValueError):
                         recurrence["until"] = datetime.fromisoformat(until_str).date()
 
-            result = ctx.client.create_event(
+            result = app_ctx.client.create_event(
                 calendar_index=calendar_index,
                 title=title,
                 description=description,
@@ -484,7 +477,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             if end_date_str:
                 end_date = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
 
-            events = ctx.client.get_events(
+            events = app_ctx.client.get_events(
                 calendar_index=calendar_index,
                 start_date=start_date,
                 end_date=end_date,
@@ -500,7 +493,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
 
         elif name == "caldav_get_today_events":
             calendar_index = arguments.get("calendar_index", 0)
-            events = ctx.client.get_today_events(calendar_index=calendar_index)
+            events = app_ctx.client.get_today_events(calendar_index=calendar_index)
 
             return [
                 TextContent(
@@ -512,7 +505,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
         elif name == "caldav_get_week_events":
             calendar_index = arguments.get("calendar_index", 0)
             start_from_today = arguments.get("start_from_today", True)
-            events = ctx.client.get_week_events(
+            events = app_ctx.client.get_week_events(
                 calendar_index=calendar_index, start_from_today=start_from_today
             )
 
@@ -527,7 +520,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             uid = arguments.get("uid")
             calendar_index = arguments.get("calendar_index", 0)
 
-            event = ctx.client.get_event_by_uid(uid=uid, calendar_index=calendar_index)
+            event = app_ctx.client.get_event_by_uid(uid=uid, calendar_index=calendar_index)
 
             if event:
                 return [
@@ -550,7 +543,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             uid = arguments.get("uid")
             calendar_index = arguments.get("calendar_index", 0)
 
-            result = ctx.client.delete_event(uid=uid, calendar_index=calendar_index)
+            result = app_ctx.client.delete_event(uid=uid, calendar_index=calendar_index)
 
             return [
                 TextContent(
@@ -581,7 +574,7 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
             if end_date_str:
                 end_date = datetime.fromisoformat(end_date_str.replace("Z", "+00:00"))
 
-            events = ctx.client.search_events(
+            events = app_ctx.client.search_events(
                 calendar_index=calendar_index,
                 query=query,
                 search_fields=search_fields,
@@ -612,6 +605,36 @@ async def call_tool(name: str, arguments: Any) -> Sequence[TextContent]:
                 text=json.dumps({"error": str(e)}, indent=2),
             )
         ]
+
+
+async def handle_list_tools(
+    ctx: ServerRequestContext[AppContext],
+    params: types.PaginatedRequestParams | None,  # noqa: ARG001
+) -> types.ListToolsResult:
+    """MCP v2-compatible list-tools handler."""
+    return types.ListToolsResult(tools=await list_tools(ctx.lifespan_context))
+
+
+async def handle_call_tool(
+    ctx: ServerRequestContext[AppContext],
+    params: types.CallToolRequestParams,
+) -> types.CallToolResult:
+    """MCP v2-compatible tool-call handler."""
+    content = await call_tool(
+        ctx.lifespan_context,
+        params.name,
+        params.arguments or {},
+    )
+    return types.CallToolResult(content=list(content))
+
+
+# Create server instance using the constructor-based handler API used by MCP v2.
+app = Server(
+    "mcp-caldav",
+    lifespan=server_lifespan,
+    on_list_tools=handle_list_tools,
+    on_call_tool=handle_call_tool,
+)
 
 
 async def run_server(transport: str = "stdio", port: int = 8000) -> None:
